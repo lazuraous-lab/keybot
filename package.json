@@ -1,0 +1,22 @@
+{
+  "name": "keybot",
+  "version": "1.0.0",
+  "description": "",
+  "main": "bot.js",
+  "scripts": {
+    "bot": "node bot.js",
+    "server": "node server.js",
+    "start": "concurrently \"node bot.js\" \"node server.js\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "concurrently": "^9.2.1",
+    "discord.js": "^14.25.1",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0"
+  }
+}
