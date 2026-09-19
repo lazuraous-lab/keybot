@@ -5,7 +5,9 @@ const db = new Database('keys.db');
 
 const SECRET_TOKEN = 'k4v3k4_s3cr3t_9x2m';
 
-// --- Tables ---
+// ============================================================
+// TABLES
+// ============================================================
 db.exec(`
 CREATE TABLE IF NOT EXISTS keys (
     key TEXT PRIMARY KEY,
@@ -26,7 +28,9 @@ CREATE TABLE IF NOT EXISTS globalstate (
 );
 `);
 
-// --- Key validation (client calls this once) ---
+// ============================================================
+// KEY VALIDATION (client calls this once)
+// ============================================================
 app.get('/checkkey', (req, res) => {
     if (req.query.token !== SECRET_TOKEN) {
         return res.status(403).json({ valid: false, reason: 'Forbidden' });
@@ -42,17 +46,21 @@ app.get('/checkkey', (req, res) => {
 
     const hwid = req.query.hwid || 'unknown';
 
-    // Burn key
+    // Burn the key
     db.prepare('UPDATE keys SET used = 1, usedBy = ? WHERE key = ?').run(hwid, key);
 
-    // Register a session
-    db.prepare('INSERT OR REPLACE INTO sessions (hwid, key, startedAt, expiresAt, killed) VALUES (?, ?, ?, ?, 0)')
-      .run(hwid, key, Date.now(), Date.now() + 60 * 60 * 1000);
+    // Register a session with a 60-min expiry
+    db.prepare(`
+        INSERT OR REPLACE INTO sessions (hwid, key, startedAt, expiresAt, killed)
+        VALUES (?, ?, ?, ?, 0)
+    `).run(hwid, key, Date.now(), Date.now() + 60 * 60 * 1000);
 
     res.json({ valid: true });
 });
 
-// --- Session check (client polls this every ~20s) ---
+// ============================================================
+// SESSION CHECK (client polls this every ~20s)
+// ============================================================
 app.get('/session', (req, res) => {
     if (req.query.token !== SECRET_TOKEN) {
         return res.status(403).json({ alive: false, reason: 'Forbidden' });
@@ -61,21 +69,34 @@ app.get('/session', (req, res) => {
     const hwid = req.query.hwid || '';
     if (!hwid) return res.json({ alive: false, reason: 'No hwid' });
 
-    // Global kill?
+    // Global kill switch?
     const g = db.prepare('SELECT value FROM globalstate WHERE key = ?').get('killall');
     if (g && g.value === '1') {
-        return res.json({ alive: false, reason: 'Killed by owner' });
+        return res.json({ alive: false, reason: 'Ended by owner' });
     }
 
     const session = db.prepare('SELECT * FROM sessions WHERE hwid = ?').get(hwid);
-    if (!session)             return res.json({ alive: false, reason: 'Session not found' });
-    if (session.killed)       return res.json({ alive: false, reason: 'Killed by owner' });
-    if (Date.now() > session.expiresAt) return res.json({ alive: false, reason: 'Session expired' });
+    if (!session)                       return res.json({ alive: false, reason: 'Session not found' });
+    if (session.killed)                 return res.json({ alive: false, reason: 'Ended by owner' });
+    if (Date.now() > session.expiresAt) return res.json({ alive: false, reason: 'Time expired' });
 
     res.json({ alive: true });
 });
 
-// --- Owner kill controls ---
+// ============================================================
+// DEREGISTER (client tells us it's done)
+// ============================================================
+app.get('/deregister', (req, res) => {
+    if (req.query.token !== SECRET_TOKEN) return res.status(403).json({ ok: false });
+    const hwid = req.query.hwid;
+    if (!hwid) return res.json({ ok: false });
+    db.prepare('DELETE FROM sessions WHERE hwid = ?').run(hwid);
+    res.json({ ok: true });
+});
+
+// ============================================================
+// OWNER KILL CONTROLS (browser-accessible alternatives)
+// ============================================================
 app.get('/killall', (req, res) => {
     if (req.query.token !== SECRET_TOKEN) return res.status(403).json({ ok: false });
     db.prepare('INSERT OR REPLACE INTO globalstate (key, value) VALUES (?, ?)').run('killall', '1');
@@ -96,5 +117,8 @@ app.get('/kill', (req, res) => {
     res.json({ ok: true });
 });
 
+// ============================================================
+// START
+// ============================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server on port ${PORT}`));
