@@ -35,8 +35,6 @@ CREATE TABLE IF NOT EXISTS globalstate (
 `);
 
 const EXPIRY_MINUTES = 60;
-
-// Your Discord user ID — put this in your .env
 const OWNER_ID = process.env.OWNER_ID;
 
 client.on('ready', () => {
@@ -46,7 +44,9 @@ client.on('ready', () => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
-    // ---------- Public command ----------
+    // ============================================================
+    // PUBLIC COMMAND
+    // ============================================================
     if (message.content === '!getkey') {
         const key = crypto.randomBytes(8).toString('hex').toUpperCase();
         const expiresAt = Date.now() + (EXPIRY_MINUTES * 60 * 1000);
@@ -63,55 +63,76 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // ---------- Owner-only commands ----------
+    // ============================================================
+    // OWNER-ONLY COMMANDS
+    // ============================================================
     if (message.author.id !== OWNER_ID) return;
 
-    if (message.content === '!killall') {
-        db.prepare('INSERT OR REPLACE INTO globalstate (key, value) VALUES (?, ?)').run('killall', '1');
-        return message.reply('🛑 Killed ALL active sessions.');
+    // ----- Generate a key to hand out manually -----
+    if (message.content === '!genkey') {
+        const key = crypto.randomBytes(8).toString('hex').toUpperCase();
+        const expiresAt = Date.now() + (EXPIRY_MINUTES * 60 * 1000);
+
+        db.prepare('INSERT INTO keys (key, expiresAt) VALUES (?, ?)').run(key, expiresAt);
+
+        return message.reply(
+            `Here's a fresh key:\n\`\`\`\n${key}\n\`\`\`\n` +
+            `Expires in ${EXPIRY_MINUTES} minutes. Send it to whoever you want.`
+        );
     }
 
-    if (message.content === '!unkillall') {
-        db.prepare('INSERT OR REPLACE INTO globalstate (key, value) VALUES (?, ?)').run('killall', '0');
-        return message.reply('✅ Kill switch reset. New validations will run.');
-    }
-
-    if (message.content.startsWith('!kill ')) {
+    // ----- End one session now -----
+    if (message.content.startsWith('!end ')) {
         const hwid = message.content.split(' ')[1];
-        if (!hwid) return message.reply('Usage: `!kill <hwid>`');
+        if (!hwid) return message.reply('Usage: `!end <hwid>`');
         db.prepare('UPDATE sessions SET killed = 1 WHERE hwid = ?').run(hwid);
-        return message.reply(`🛑 Killed session \`${hwid}\`.`);
+        return message.reply(`🛑 Ended session \`${hwid}\` immediately.`);
     }
 
-    if (message.content.startsWith('!unkill ')) {
-        const hwid = message.content.split(' ')[1];
-        if (!hwid) return message.reply('Usage: `!unkill <hwid>`');
-        db.prepare('UPDATE sessions SET killed = 0 WHERE hwid = ?').run(hwid);
-        return message.reply(`✅ Resurrected session \`${hwid}\`.`);
+    // ----- End every session now -----
+    if (message.content === '!endall') {
+        db.prepare('INSERT OR REPLACE INTO globalstate (key, value) VALUES (?, ?)').run('killall', '1');
+        return message.reply('🛑 Ended ALL active sessions immediately.');
     }
 
+    // ----- Active sessions -----
     if (message.content === '!sessions') {
-        const rows = db.prepare('SELECT * FROM sessions ORDER BY startedAt DESC').all();
+        const rows = db.prepare('SELECT * FROM sessions WHERE killed = 0 ORDER BY startedAt DESC').all();
         if (rows.length === 0) return message.reply('No active sessions.');
 
         const lines = rows.map(r => {
             const started = new Date(r.startedAt).toLocaleTimeString();
-            const status  = r.killed ? '🛑 killed' : '✅ alive';
-            return `\`${r.hwid}\` — ${status} — started ${started}`;
+            const msLeft  = r.expiresAt - Date.now();
+            const minLeft = Math.max(0, Math.floor(msLeft / 60000));
+            return `\`${r.hwid}\` — started ${started} — ends in ~${minLeft} min`;
         });
-        return message.reply('**Sessions:**\n' + lines.join('\n'));
+        return message.reply('**Active sessions:**\n' + lines.join('\n'));
     }
 
+    // ----- Ended sessions -----
+    if (message.content === '!ended') {
+        const rows = db.prepare('SELECT * FROM sessions WHERE killed = 1 ORDER BY startedAt DESC').all();
+        if (rows.length === 0) return message.reply('No ended sessions.');
+
+        const lines = rows.map(r => {
+            const started = new Date(r.startedAt).toLocaleTimeString();
+            return `\`${r.hwid}\` — started ${started}`;
+        });
+        return message.reply('**Ended sessions:**\n' + lines.join('\n'));
+    }
+
+    // ----- Help -----
     if (message.content === '!help') {
         return message.reply(
-            '**Owner Commands**\n' +
-            '`!killall` — kill everyone\n' +
-            '`!unkillall` — reset kill switch\n' +
-            '`!kill <hwid>` — kill one user\n' +
-            '`!unkill <hwid>` — unkill one user\n' +
-            '`!sessions` — list active sessions\n' +
             '**Public**\n' +
-            '`!getkey` — DM a key'
+            '`!getkey` — DM a key to anyone in the server\n' +
+            '\n' +
+            '**Owner**\n' +
+            '`!genkey` — generate a key to share manually\n' +
+            '`!end <hwid>` — end one session now\n' +
+            '`!endall` — end every session now\n' +
+            '`!sessions` — list active sessions\n' +
+            '`!ended` — list ended sessions'
         );
     }
 });
