@@ -85,14 +85,17 @@ client.on('messageCreate', async (message) => {
     if (message.content.startsWith('!end ')) {
         const hwid = message.content.split(' ')[1];
         if (!hwid) return message.reply('Usage: `!end <hwid>`');
-        db.prepare('UPDATE sessions SET killed = 1 WHERE hwid = ?').run(hwid);
+        const result = db.prepare('UPDATE sessions SET killed = 1 WHERE hwid = ?').run(hwid);
+        if (result.changes === 0) {
+            return message.reply(`⚠️ No active session found for \`${hwid}\`.`);
+        }
         return message.reply(`🛑 Ended session \`${hwid}\` immediately.`);
     }
 
     // ----- End every session now -----
     if (message.content === '!endall') {
-        db.prepare('INSERT OR REPLACE INTO globalstate (key, value) VALUES (?, ?)').run('killall', '1');
-        return message.reply('🛑 Ended ALL active sessions immediately.');
+        const result = db.prepare('UPDATE sessions SET killed = 1 WHERE killed = 0').run();
+        return message.reply(`🛑 Ended ${result.changes} active session(s) immediately.`);
     }
 
     // ----- Active sessions -----
